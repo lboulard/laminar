@@ -150,6 +150,7 @@ template<> const char* Database::Statement::fetchColumn(int col);
 template<> int Database::Statement::fetchColumn(int col);
 template<> uint Database::Statement::fetchColumn(int col);
 template<> long Database::Statement::fetchColumn(int col);
+template<> unsigned long long Database::Statement::fetchColumn(int col);
 template<> ulong Database::Statement::fetchColumn(int col);
 
 #endif // LAMINAR_DATABASE_H_

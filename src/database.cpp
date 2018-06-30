@@ -92,6 +92,10 @@ template<> long Database::Statement::fetchColumn(int col) {
     return static_cast<long>(sqlite3_column_int64(stmt, col));
 }
 
+template<> unsigned long long Database::Statement::fetchColumn(int col) {
+    return static_cast<unsigned long long>(sqlite3_column_int64(stmt, col));
+}
+
 template<> ulong Database::Statement::fetchColumn(int col) {
     return static_cast<ulong>(sqlite3_column_int64(stmt, col));
 }
