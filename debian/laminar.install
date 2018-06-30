@@ -1,0 +1,5 @@
+#!/usr/bin/dh-exec
+
+obj-${DEB_HOST_MULTIARCH}/laminarc    usr/bin
+obj-${DEB_HOST_MULTIARCH}/laminard    usr/sbin
+debian/laminar.conf    etc

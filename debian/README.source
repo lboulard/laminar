@@ -1,0 +1,7 @@
+laminar for Debian
+-----------------
+
+Build use custom build of CapnProto and does not use platform provided package.
+
+ -- Laurent Boulard <laurent.boulard@gmail.com>  Sat, 30 Jun 2018 18:29:50 +0200
+

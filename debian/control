@@ -1,0 +1,14 @@
+Source: laminar
+Section: web
+Priority: optional
+Maintainer: Laurent Boulard <laurent.boulard@gmail.com>
+Build-Depends: debhelper (>=9), dh-exec, cmake, coreutils, libsqlite3-0,
+ libboost-filesystem1.58-dev, libboost-dev, zlib1g, libwebsocketpp-dev,
+ rapidjson-dev, google-mock
+Standards-Version: 3.9.6
+Homepage: https://github.com/ohwgiles/laminar
+
+Package: laminar
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Lightweight Continuous Integration Service

@@ -1,0 +1,5 @@
+laminar (0.6-1) xenial; urgency=low
+
+  * Initial packaging
+
+ -- Laurent Boulard <laurent.boulard@gmail.com>  Sun, 01 Jul 2018 18:52:57 +0200
