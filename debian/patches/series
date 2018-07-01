@@ -1,1 +1,2 @@
 0001-Use-CMake-for-building-dependencies.patch
+0002-database-types-for-32bit.patch

@@ -1,0 +1,34 @@
+--- laminar.orig/src/database.cpp
++++ laminar/src/database.cpp
+@@ -96,6 +96,19 @@ template<> ulong Database::Statement::fe
+     return static_cast<ulong>(sqlite3_column_int64(stmt, col));
+ }
+ 
++#if ULLONG_MAX > ULONG_MAX
++
++// unsigned long long support to build on 32bit platform
++
++template<> long long Database::Statement::fetchColumn(int col) {
++    return static_cast<long long>(sqlite3_column_int64(stmt, col));
++}
++template<> unsigned long long Database::Statement::fetchColumn(int col) {
++    return static_cast<unsigned long long>(sqlite3_column_int64(stmt, col));
++}
++
++#endif
++
+ bool Database::Statement::row() {
+     return sqlite3_step(stmt) == SQLITE_ROW;
+ }
+--- laminar.orig/src/database.h
++++ laminar/src/database.h
+@@ -151,5 +151,9 @@ template<> int Database::Statement::fetc
+ template<> uint Database::Statement::fetchColumn(int col);
+ template<> long Database::Statement::fetchColumn(int col);
+ template<> ulong Database::Statement::fetchColumn(int col);
++#if ULLONG_MAX > ULONG_MAX
++template<> long long Database::Statement::fetchColumn(int col);
++template<> unsigned long long Database::Statement::fetchColumn(int col);
++#endif
+ 
+ #endif // LAMINAR_DATABASE_H_
