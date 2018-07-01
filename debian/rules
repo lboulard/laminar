@@ -17,6 +17,8 @@ override_dh_auto_configure:
 
 override_dh_auto_install:
 
+ifeq (ON,$(BUILD_TESTS))
 override_dh_auto_test:
 	# How to find build directory correctly ?
 	./obj-$(DEB_TARGET_MULTIARCH)/laminar-tests
+endif
