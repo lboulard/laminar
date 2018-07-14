@@ -1,0 +1,14 @@
+Template: laminar/user
+Type: string
+Default: laminar
+Description: Select user account to use when running Laminar service.
+ If account does not exist, it will be created.
+
+Template: laminar/workdir
+Type: string
+Default: /var/lib/laminar
+Description: Laminar work directory.
+ If directory does not exist, it will be created with ownership from user
+ selected for running Laminar service. When directory already exists, no change
+ will be applied. Laminar service may not work in case incorrect permissions and
+ ownership is set for existing work directory.

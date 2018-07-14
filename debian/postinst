@@ -5,26 +5,41 @@
 
 set -e
 
-# summary of how this script can be called:
-#        * <postinst> `configure' <most-recently-configured-version>
-#        * <old-postinst> `abort-upgrade' <new version>
-#        * <conflictor's-postinst> `abort-remove' `in-favour' <package>
-#          <new-version>
-#        * <postinst> `abort-remove'
-#        * <deconfigured's-postinst> `abort-deconfigure' `in-favour'
-#          <failed-install-package> <version> `removing'
-#          <conflicting-package> <version>
-# for details, see https://www.debian.org/doc/debian-policy/ or
-# the debian-policy package
+. /usr/share/debconf/confmodule
 
+db_get laminar/user; user="${RET:-laminar}";
+db_get laminar/workdir; workdir="${RET:-/var/lib/laminar}"
+
+systemd_local_conf=/lib/systemd/system/laminar.service.d/debian.conf
+
+setup_laminar() {
+    if ! getent passwd "$user" >/dev/null ; then
+        useradd --system -d "$workdir" -s /usr/sbin/nologin "$user"
+    fi
+    # Override default user from service
+    if [ "$user" != "laminar" ] || [ "$DEBCONF_RECONFIGURE" = "1" ] ; then
+        if [ ! -e "$systemd_local_conf" ] ; then
+            mkdir -p "$(dirname "$systemd_local_conf")"
+            { echo "[Service]"; echo "User=$user"; } \
+                >> "$systemd_local_conf"
+        fi
+    fi
+    if [ ! -d "$workdir" ] || [ "$DEBCONF_RECONFIGURE" = "1" ] ; then
+        mkdir -p "$workdir/cfg/jobs"
+        mkdir -p "$workdir/cfg/nodes"
+        mkdir -p "$workdir/cfg/scripts"
+        chown -R "$user:" "$workdir/cfg"
+    fi
+}
 
 case "$1" in
+    reconfigure)
+        DEBCONF_RECONFIGURE=1
+        setup_laminar
+    ;;
+
     configure)
-        useradd -r -d /var/lib/laminar -s /usr/sbin/nologin laminar
-        mkdir -p /var/lib/laminar/cfg/jobs
-        mkdir -p /var/lib/laminar/cfg/nodes
-        mkdir -p /var/lib/laminar/cfg/scripts
-        chown -R laminar: /var/lib/laminar
+        setup_laminar
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
