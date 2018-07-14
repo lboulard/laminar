@@ -1,0 +1,751 @@
+commit 890d501d2b394ec55ef44c80fd63b97662aae0a7
+Author: Laurent Boulard <laurent.boulard@gmail.com>
+Date:   Sun Jul 15 15:24:09 2018 +0200
+
+    Allow to run server from a domain with path
+
+--- laminar.orig/CMakeLists.txt
++++ laminar/CMakeLists.txt
+@@ -63,8 +63,31 @@ macro(generate_compressed_bins BASEDIR)
+     endforeach()
+ endmacro()
+ 
++# Same purpose as previous macro but do not compress content.
++# Index page is embedded uncompressed. laminard will change base href at
++# runtime to permit relocation behind web reverse proxy.
++macro(generate_bins BASEDIR)
++    foreach(FILE ${ARGN})
++        set(OUTPUT_FILE "${FILE}.o")
++        get_filename_component(DIR ${FILE} PATH)
++        if(DIR)
++            file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${DIR})
++        endif()
++        add_custom_command(OUTPUT ${OUTPUT_FILE}
++            # Copy resource to build dir to have simple symbol name
++            COMMAND cp -f ${BASEDIR}/${FILE} ${FILE}
++            COMMAND ld -r -b binary -o ${OUTPUT_FILE} ${FILE}
++            DEPENDS ${BASEDIR}/${FILE}
++        )
++    list(APPEND RESOURCES_BINS ${OUTPUT_FILE})
++    endforeach()
++endmacro()
++
++# Compile index page resources
++generate_bins(${CMAKE_SOURCE_DIR}/src/resources head.html body.html)
++
+ # Zip and compile statically served resources
+-generate_compressed_bins(${CMAKE_SOURCE_DIR}/src/resources index.html js/app.js
++generate_compressed_bins(${CMAKE_SOURCE_DIR}/src/resources js/app.js
+     favicon.ico favicon-152.png icon.png)
+ 
+ # Download 3rd-party frontend JS libs...
+@@ -93,7 +116,8 @@ capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS
+ 
+ ## Server
+ add_executable(laminard src/database.cpp src/main.cpp src/server.cpp src/laminar.cpp
+-    src/conf.cpp src/resources.cpp src/run.cpp ${CAPNP_SRCS} ${COMPRESSED_BINS})
++    src/conf.cpp src/resources.cpp src/run.cpp ${CAPNP_SRCS} ${COMPRESSED_BINS}
++    ${RESOURCES_BINS})
+ # TODO: some alternative to boost::filesystem?
+ target_link_libraries(laminard PRIVATE CapnProto::capnp-rpc PRIVATE CapnProto::capnp
+     PRIVATE CapnProto::kj PRIVATE CapnProto::kj-async
+@@ -113,7 +137,7 @@ if(BUILD_TESTS)
+         PATH_SUFFIXES . lib
+         )
+     include_directories(${GTEST_INCLUDE_DIRS} src)
+-    add_executable(laminar-tests src/conf.cpp src/database.cpp src/laminar.cpp src/run.cpp src/server.cpp ${CAPNP_SRCS} src/resources.cpp ${COMPRESSED_BINS} test/test-conf.cpp test/test-database.cpp test/test-laminar.cpp test/test-run.cpp test/test-server.cpp)
++    add_executable(laminar-tests src/conf.cpp src/database.cpp src/laminar.cpp src/run.cpp src/server.cpp ${CAPNP_SRCS} src/resources.cpp ${COMPRESSED_BINS} ${RESOURCES_BINS} test/test-conf.cpp test/test-database.cpp test/test-laminar.cpp test/test-run.cpp test/test-server.cpp)
+     target_link_libraries(laminar-tests
+         PRIVATE CapnProto::capnp-rpc PRIVATE CapnProto::capnp
+         PRIVATE CapnProto::kj PRIVATE CapnProto::kj-async
+--- laminar.orig/laminar.conf
++++ laminar/laminar.conf
+@@ -52,3 +52,12 @@
+ ### webserver handle serving those requests.
+ ###
+ #LAMINAR_ARCHIVE_URL=http://backbone.example.com/ci/archive
++
++###
++### LAMINAR_BASE_PATH
++###
++### Laminar base path on server. Change this variable when Laminar must be
++### moved to a location inside an existing server. This is useful to host
++### Laminar behind a reverse web proxy with other applications sharing same
++### domain. By default, Laminar is expected to serve at domain root.
++#LAMINAR_BASE_PATH=/
+--- laminar.orig/src/resources.cpp
++++ laminar/src/resources.cpp
+@@ -24,6 +24,11 @@
+     extern const char _binary_##name##_z_end[]; \
+     resources.emplace(route, Resource{_binary_ ## name ## _z_start, _binary_ ## name ## _z_end, content_type})
+ 
++#define INIT_TEMPLATE(route, name, content_type) \
++    extern const char _binary_##name##_start[];\
++    extern const char _binary_##name##_end[]; \
++    templates.emplace(route, Resource{_binary_ ## name ## _start, _binary_ ## name ## _end, content_type})
++
+ #define CONTENT_TYPE_HTML "text/html; charset=utf-8"
+ #define CONTENT_TYPE_ICO  "image/x-icon"
+ #define CONTENT_TYPE_PNG  "image/png"
+@@ -32,7 +37,9 @@
+ 
+ Resources::Resources()
+ {
+-    INIT_RESOURCE("/", index_html, CONTENT_TYPE_HTML);
++    INIT_TEMPLATE("/head.html", head_html, CONTENT_TYPE_HTML);
++    INIT_TEMPLATE("/body.html", body_html, CONTENT_TYPE_HTML);
++
+     INIT_RESOURCE("/favicon.ico", favicon_ico, CONTENT_TYPE_ICO);
+     INIT_RESOURCE("/favicon-152.png", favicon_152_png, CONTENT_TYPE_PNG);
+     INIT_RESOURCE("/icon.png", icon_png, CONTENT_TYPE_PNG);
+@@ -52,11 +59,7 @@ inline bool beginsWith(std::string hayst
+ }
+ 
+ bool Resources::handleRequest(std::string path, const char** start, const char** end, const char** content_type) {
+-    // need to keep the list of "application links" synchronised with the angular
+-    // application. We cannot return a 404 for any of these
+-    auto it = beginsWith(path,"/jobs")
+-            ? resources.find("/")
+-            : resources.find(path);
++    auto it = resources.find(path);
+ 
+     if(it != resources.end()) {
+         *start = it->second.start;
+@@ -68,3 +71,15 @@ bool Resources::handleRequest(std::strin
+     return false;
+ }
+ 
++std::string Resources::find_template(std::string path){
++    auto it = templates.find(path);
++
++    if(it != templates.end()) {
++        const char *start = it->second.start;
++        const char *end = it->second.end;
++        // Ignore content type for now
++        return std::string(start, end);
++    }
++
++    return std::string();
++}
+--- laminar.orig/src/resources.h
++++ laminar/src/resources.h
+@@ -34,6 +34,9 @@ public:
+     // type. Function returns false if no resource for the given path exists
+     bool handleRequest(std::string path, const char** start, const char** end, const char** content_type);
+ 
++    // Find source templates.
++    std::string find_template(std::string path);
++
+ private:
+     struct Resource {
+         const char* start;
+@@ -41,6 +44,7 @@ private:
+         const char* content_type;
+     };
+     std::unordered_map<std::string, const Resource> resources;
++    std::unordered_map<std::string, const Resource> templates;
+ };
+ 
+ #endif // LAMINAR_RESOURCES_H_
+--- laminar.orig/src/resources/index.html
++++ /dev/null
+@@ -1,252 +0,0 @@
+-<!doctype html>
+-<html>
+-<head>
+- <base href="/">
+- <meta charset="utf-8">
+- <meta http-equiv="X-UA-Compatible" content="IE=edge">
+- <meta name="viewport" content="width=device-width, initial-scale=1">
+- <meta name="apple-mobile-web-app-capable" content="yes" />
+- <link rel="apple-touch-icon-precomposed" href="/favicon-152.png">
+- <title>Laminar</title>
+- <script src="/js/vue.min.js"></script>
+- <script src="/js/vue-router.min.js"></script>
+- <script src="/js/ansi_up.js"></script>
+- <script src="/js/Chart.min.js"></script>
+- <script src="/js/Chart.HorizontalBar.js"></script>
+- <link href="/css/bootstrap.min.css" rel="stylesheet">
+- <link href="/custom/style.css" rel="stylesheet">
+- <script src="/js/app.js" defer></script>
+- <style>
+-  body, html { height: 100%; }
+-  .navbar { margin-bottom: 0; border-radius: 0; }
+-  .navbar-brand { margin: 0 -15px; padding: 7px 15px }
+-  .navbar-brand>img { display: inline; }
+-  a.navbar-btn { color: #9d9d9d; }
+-  a.navbar-btn.active { color: #fff; }
+-  a.navbar-btn:hover { color: #fff; text-decoration: none; }
+-  a.navbar-btn:focus { color: #fff; }
+-  .bell { margin: 8px 15px; color: #9d9d9d; }
+-  .bell:hover { text-decoration: none; color: #9d9d9d; cursor: pointer; }
+-  .bell.active { color: #333; }
+-  dt,dd { line-height: 2; }
+-  canvas {
+-   width: 100% !important;
+-   max-width: 800px;
+-   height: auto !important;
+-  }
+-  .progress {
+-   height: 10px;
+-   margin-top: 5px;
+-   margin-bottom: 0;
+-  }
+-  table#joblist tr:first-child td { border-top: 0; }
+-  #popup-connecting {
+-    position: fixed;
+-    background: white;
+-    border: 1px solid #ddd;
+-    bottom: 10px;
+-    right: 10px;
+-    padding: 20px;
+-  }
+-  span.status {
+-    display: inline-block;
+-    width: 1em;
+-    text-align: center;
+-    font-family: sans-serif;
+-  }
+-  span.success { color: forestgreen; }
+-  span.failed { color: firebrick; }
+-  span.aborted { color: indigo; }
+-  span.spin {
+-    color: steelblue;
+-    animation: 2s linear infinite spin;
+-  }
+-  @keyframes spin {
+-    to { transform: rotate(360deg); }
+-  }
+- </style>
+-</head>
+-<body>
+- <template id="home"><div>
+-  <ol class="breadcrumb"><li class="active">Home</li></ol>
+-  <div class="container-fluid"><div class="row">
+-   <div class="col-sm-5 col-md-4 col-lg-3 dash">
+-    <table class="table table-bordered">
+-     <tr v-for="job in jobsQueued">
+-      <td><router-link :to="'/jobs/'+job.name">{{job.name}}</router-link> <i>queued</i></td>
+-     </tr>
+-     <tr v-for="job in jobsRunning">
+-      <td><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+job.name">{{job.name}}</router-link> <router-link :to="'/jobs/'+job.name+'/'+job.number">#{{job.number}}</router-link>
+-       <small class="pull-right">{{formatDuration(job.started, job.completed)}}</small>
+-       <div class="progress">
+-         <div class="progress-bar progress-bar-striped" :class="'progress-bar-'+(job.overtime?'warning':'info')" :class="job.etc?'':'active'" :style="'width:'+(!job.etc?'100':job.progress)+'%'"></div>
+-       </div>
+-      </td>
+-     </tr>
+-     <tr v-for="job in jobsRecent">
+-      <td><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+job.name">{{job.name}}</router-link> <router-link :to="'/jobs/'+job.name+'/'+job.number">#{{job.number}}</router-link><br><small>Took {{formatDuration(job.started, job.completed)}} at {{formatDate(job.started)}}</small></td>
+-     </tr>
+-    </table>
+-   </div>
+-   <div class="col-sm-7 col-md-8 col-lg-9"><div class="row">
+-    <div class="col-md-6">
+-     <div class="panel panel-default">
+-      <div class="panel-heading">Total builds per day this week</div>
+-      <div class="panel-body">
+-       <canvas id="chartBpd"></canvas>
+-      </div>
+-     </div>
+-    </div>
+-    <div class="col-md-6">
+-     <div class="panel panel-default">
+-      <div class="panel-heading">Builds per job in the last 24 hours</div>
+-      <div class="panel-body" id="chartStatus">
+-       <canvas id="chartBpj"></canvas>
+-      </div>
+-     </div>
+-    </div>
+-    <div class="col-md-6">
+-     <div class="panel panel-default">
+-      <div class="panel-heading">Average build time per job this week</div>
+-      <div class="panel-body">
+-       <canvas id="chartTpj"></canvas>
+-      </div>
+-     </div>
+-    </div>
+-    <div class="col-md-6">
+-     <div class="panel panel-default">
+-      <div class="panel-heading">Current executor utilization</div>
+-      <div class="panel-body">
+-       <canvas id="chartUtil"></canvas>
+-      </div>
+-     </div>
+-    </div>
+-   </div></div>
+-  </div></div> 
+- </div></template>
+- 
+- <template id="jobs"><div>
+-  <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li class="active">Jobs</li></ol>
+-  <div class="container-fluid"><div class="row">
+-   <div class="col-xs-12">
+-    <div class="pull-right">
+-     <input class="form-control" id="jobFilter" v-model="search" placeholder="Filter...">
+-    </div>
+-    <ul class="nav nav-tabs">
+-     <li :class="{'active':tag==null}"><a href v-on:click.prevent="tag = null">All Jobs</a></li>
+-     <li v-for="t in tags" :class="{'active':t==tag}"><a href v-on:click.prevent="tag = t">{{t}}</a></li>
+-    </ul>
+-    <table class="table table-striped" id="joblist">
+-     <tr   v-for="job in filteredJobs">
+-      <td><router-link :to="'/jobs/'+job.name">{{job.name}}</router-link></td>
+-      <td class="text-center"><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+job.name+'/'+job.number">#{{job.number}}</router-link></td>
+-      <td class="text-center">{{formatDate(job.started)}}</td>
+-      <td class="text-center">{{formatDuration(job.started,job.completed)}}</td>
+-     </tr>
+-    </table>
+-   </div>
+-  </div></div>
+- </div></template>
+- 
+- <template id="job"><div>
+-  <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li><router-link to="/jobs">Jobs</router-link></li><li class="active">{{$route.params.name}}</li></ol></ol>
+-  <div class="container-fluid">
+-   <div class="row">
+-    <div class="col-sm-5 col-md-6 col-lg-7">
+-    <h3>{{$route.params.name}}</h3>
+-    <dl class="dl-horizontal">
+-     <dt>Last Successful Run</dt>
+-     <dd><router-link v-if="lastSuccess" :to="'/jobs/'+$route.params.name+'/'+lastSuccess.number">#{{lastSuccess.number}}</router-link> {{lastSuccess?' - at '+formatDate(lastSuccess.started):'never'}}</dd>
+-     <dt>Last Failed Run</dt>
+-     <dd><router-link v-if="lastFailed" :to="'/jobs/'+$route.params.name+'/'+lastFailed.number">#{{lastFailed.number}}</router-link> {{lastFailed?' - at '+formatDate(lastFailed.started):'never'}}</dd>
+-    </dl>
+-    </div>
+-    <div class="col-sm-7 col-md-6 col-lg-5">
+-    <div class="panel panel-default">
+-      <div class="panel-heading">Build time</div>
+-      <div class="panel-body">
+-      <canvas id="chartBt"></canvas>
+-      </div>
+-    </div>
+-    </div>
+-   </div>
+-   <div class="row"><div class="col-xs-12">
+-    <table class="table table-striped"><thead>
+-     <tr><th>Run</th><th class="text-center">Started</th><th class="text-center">Duration</th><th class="text-center hidden-xs">Reason</th></tr></thead>
+-     <tr v-show="nQueued">
+-      <td colspan="4"><i>{{nQueued}} run(s) queued</i></td>
+-     </tr>
+-     <tr v-for="job in jobsRunning" track-by="$index">
+-      <td><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+$route.params.name+'/'+job.number">#{{job.number}}</router-link></td>
+-      <td class="text-center">{{formatDate(job.started)}}</td>
+-      <td class="text-center">{{formatDuration(job.started, job.completed)}}</td>
+-      <td class="text-center hidden-xs">{{job.reason}}</td>
+-     </tr>
+-     <tr v-for="job in jobsRecent" track-by="$index">
+-      <td><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+$route.params.name+'/'+job.number">#{{job.number}}</router-link></td>
+-      <td class="text-center">{{formatDate(job.started)}}</td>
+-      <td class="text-center">{{formatDuration(job.started, job.completed)}}</td>
+-      <td class="text-center hidden-xs">{{job.reason}}</td>
+-     </tr>
+-    </table>
+-   </div></div>
+-  </div>
+- </div></template>
+- 
+- <template id="run"><div>
+-  <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li><router-link to="/jobs">Jobs</router-link></li><li><router-link :to="'/jobs/'+$route.params.name">{{$route.params.name}}</router-link></li><li class="active">#{{$route.params.number}}</li></ol></ol>
+-  <div class="container-fluid">
+-   <div class="row">
+-    <div class="col-sm-5 col-md-6 col-lg-7">
+-     <h3 style="float:left"><span v-html="runIcon(job.result)"></span> {{$route.params.name}} #{{$route.params.number}}</h3>
+-     <nav class="pull-left">
+-      <ul class="pagination" style="margin:15px 20px">
+-       <li v-show="$route.params.number > 1"><router-link :to="'/jobs/'+$route.params.name+'/'+($route.params.number-1)">&laquo;</router-link></li>
+-       <li v-show="latestNum > $route.params.number"><router-link :to="'/jobs/'+$route.params.name+'/'+(parseInt($route.params.number)+1)">&raquo;</router-link></li>
+-      </ul>
+-     </nav>
+-     <div style="clear:both;"></div>
+-     <dl class="dl-horizontal">
+-      <dt>Reason</dt><dd>{{job.reason}}</dd>
+-      <dt>Queued for</dt><dd>{{job.queued}}s</dd>
+-      <dt>Started</dt><dd>{{formatDate(job.started)}}</dd>
+-      <dt v-show="runComplete(job)">Completed</dt><dd v-show="job.completed">{{formatDate(job.completed)}}</dd>
+-      <dt>Duration</dt><dd>{{formatDuration(job.started, job.completed)}}</dd>
+-     </dl>
+-    </div>
+-    <div class="col-sm-7 col-md-6 col-lg-5">
+-     <div class="progress" v-show="job.result == 'running'">
+-      <div class="progress-bar  progress-bar-striped" :class="'progress-bar-'+(job.overtime?'warning':'info')" :class="job.etc?'':'active'" :style="{width:!job.etc?100:job.progress + '%'}"></div>
+-     </div>
+-     <div class="panel panel-default" v-show="job.artifacts.length">
+-      <div class="panel-heading">Artifacts</div>
+-      <div class="panel-body">
+-       <ul class="list-unstyled" style="margin-bottom: 0">
+-        <li v-for="art in job.artifacts"><a :href="art.url" target="_self">{{art.filename}}</a></li>
+-       </ul>
+-      </div>
+-     </div>
+-    </div>
+-   </div>
+-   <div class="row"><div class="col-xs-12">
+-    <button type="button" class="btn btn-default btn-xs pull-right" :class="{'active':autoscroll}" v-on:click="autoscroll = !autoscroll" style="margin-top:10px">Autoscroll</button>
+-    <h4>Console output</h4>
+-    <pre v-html="log"></pre>
+-   </div></div>
+-  </div>
+- </div></template>
+-
+- <div id="app">
+-  <nav class="navbar navbar-inverse">
+-   <div>
+-    <router-link to="/" class="navbar-brand"><img src="/icon.png">{{title}}</router-link>
+-    <router-link to="/jobs" class="btn navbar-btn pull-right">Jobs</router-link>
+-   </div>
+-  </nav>
+-  <a v-on:click="toggleNotifications(!notify)" v-show="supportsNotifications" class="bell pull-right" :class="{'active':notify}" :title="(notify?'Disable':'Enable')+' notifications'">&#128276;</a>
+-  <router-view></router-view>
+-  <div v-show="!connected" id="popup-connecting"><span class="status spin">⚙&#xfe0e;</span>&nbsp;Connecting...</div>
+- </div>
+-</body>
+-</html>
+-
+--- /dev/null
++++ laminar/src/resources/body.html
+@@ -0,0 +1,182 @@
++<body>
++ <template id="home"><div>
++  <ol class="breadcrumb"><li class="active">Home</li></ol>
++  <div class="container-fluid"><div class="row">
++   <div class="col-sm-5 col-md-4 col-lg-3 dash">
++    <table class="table table-bordered">
++     <tr v-for="job in jobsQueued">
++      <td><router-link :to="'/jobs/'+job.name">{{job.name}}</router-link> <i>queued</i></td>
++     </tr>
++     <tr v-for="job in jobsRunning">
++      <td><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+job.name">{{job.name}}</router-link> <router-link :to="'/jobs/'+job.name+'/'+job.number">#{{job.number}}</router-link>
++       <small class="pull-right">{{formatDuration(job.started, job.completed)}}</small>
++       <div class="progress">
++         <div class="progress-bar progress-bar-striped" :class="'progress-bar-'+(job.overtime?'warning':'info')" :class="job.etc?'':'active'" :style="'width:'+(!job.etc?'100':job.progress)+'%'"></div>
++       </div>
++      </td>
++     </tr>
++     <tr v-for="job in jobsRecent">
++      <td><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+job.name">{{job.name}}</router-link> <router-link :to="'/jobs/'+job.name+'/'+job.number">#{{job.number}}</router-link><br><small>Took {{formatDuration(job.started, job.completed)}} at {{formatDate(job.started)}}</small></td>
++     </tr>
++    </table>
++   </div>
++   <div class="col-sm-7 col-md-8 col-lg-9"><div class="row">
++    <div class="col-md-6">
++     <div class="panel panel-default">
++      <div class="panel-heading">Total builds per day this week</div>
++      <div class="panel-body">
++       <canvas id="chartBpd"></canvas>
++      </div>
++     </div>
++    </div>
++    <div class="col-md-6">
++     <div class="panel panel-default">
++      <div class="panel-heading">Builds per job in the last 24 hours</div>
++      <div class="panel-body" id="chartStatus">
++       <canvas id="chartBpj"></canvas>
++      </div>
++     </div>
++    </div>
++    <div class="col-md-6">
++     <div class="panel panel-default">
++      <div class="panel-heading">Average build time per job this week</div>
++      <div class="panel-body">
++       <canvas id="chartTpj"></canvas>
++      </div>
++     </div>
++    </div>
++    <div class="col-md-6">
++     <div class="panel panel-default">
++      <div class="panel-heading">Current executor utilization</div>
++      <div class="panel-body">
++       <canvas id="chartUtil"></canvas>
++      </div>
++     </div>
++    </div>
++   </div></div>
++  </div></div>
++ </div></template>
++
++ <template id="jobs"><div>
++  <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li class="active">Jobs</li></ol>
++  <div class="container-fluid"><div class="row">
++   <div class="col-xs-12">
++    <div class="pull-right">
++     <input class="form-control" id="jobFilter" v-model="search" placeholder="Filter...">
++    </div>
++    <ul class="nav nav-tabs">
++     <li :class="{'active':tag==null}"><a href v-on:click.prevent="tag = null">All Jobs</a></li>
++     <li v-for="t in tags" :class="{'active':t==tag}"><a href v-on:click.prevent="tag = t">{{t}}</a></li>
++    </ul>
++    <table class="table table-striped" id="joblist">
++     <tr   v-for="job in filteredJobs">
++      <td><router-link :to="'/jobs/'+job.name">{{job.name}}</router-link></td>
++      <td class="text-center"><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+job.name+'/'+job.number">#{{job.number}}</router-link></td>
++      <td class="text-center">{{formatDate(job.started)}}</td>
++      <td class="text-center">{{formatDuration(job.started,job.completed)}}</td>
++     </tr>
++    </table>
++   </div>
++  </div></div>
++ </div></template>
++
++ <template id="job"><div>
++  <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li><router-link to="/jobs">Jobs</router-link></li><li class="active">{{$route.params.name}}</li></ol></ol>
++  <div class="container-fluid">
++   <div class="row">
++    <div class="col-sm-5 col-md-6 col-lg-7">
++    <h3>{{$route.params.name}}</h3>
++    <dl class="dl-horizontal">
++     <dt>Last Successful Run</dt>
++     <dd><router-link v-if="lastSuccess" :to="'/jobs/'+$route.params.name+'/'+lastSuccess.number">#{{lastSuccess.number}}</router-link> {{lastSuccess?' - at '+formatDate(lastSuccess.started):'never'}}</dd>
++     <dt>Last Failed Run</dt>
++     <dd><router-link v-if="lastFailed" :to="'/jobs/'+$route.params.name+'/'+lastFailed.number">#{{lastFailed.number}}</router-link> {{lastFailed?' - at '+formatDate(lastFailed.started):'never'}}</dd>
++    </dl>
++    </div>
++    <div class="col-sm-7 col-md-6 col-lg-5">
++    <div class="panel panel-default">
++      <div class="panel-heading">Build time</div>
++      <div class="panel-body">
++      <canvas id="chartBt"></canvas>
++      </div>
++    </div>
++    </div>
++   </div>
++   <div class="row"><div class="col-xs-12">
++    <table class="table table-striped"><thead>
++     <tr><th>Run</th><th class="text-center">Started</th><th class="text-center">Duration</th><th class="text-center hidden-xs">Reason</th></tr></thead>
++     <tr v-show="nQueued">
++      <td colspan="4"><i>{{nQueued}} run(s) queued</i></td>
++     </tr>
++     <tr v-for="job in jobsRunning" track-by="$index">
++      <td><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+$route.params.name+'/'+job.number">#{{job.number}}</router-link></td>
++      <td class="text-center">{{formatDate(job.started)}}</td>
++      <td class="text-center">{{formatDuration(job.started, job.completed)}}</td>
++      <td class="text-center hidden-xs">{{job.reason}}</td>
++     </tr>
++     <tr v-for="job in jobsRecent" track-by="$index">
++      <td><span v-html="runIcon(job.result)"></span> <router-link :to="'/jobs/'+$route.params.name+'/'+job.number">#{{job.number}}</router-link></td>
++      <td class="text-center">{{formatDate(job.started)}}</td>
++      <td class="text-center">{{formatDuration(job.started, job.completed)}}</td>
++      <td class="text-center hidden-xs">{{job.reason}}</td>
++     </tr>
++    </table>
++   </div></div>
++  </div>
++ </div></template>
++
++ <template id="run"><div>
++  <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li><router-link to="/jobs">Jobs</router-link></li><li><router-link :to="'/jobs/'+$route.params.name">{{$route.params.name}}</router-link></li><li class="active">#{{$route.params.number}}</li></ol></ol>
++  <div class="container-fluid">
++   <div class="row">
++    <div class="col-sm-5 col-md-6 col-lg-7">
++     <h3 style="float:left"><span v-html="runIcon(job.result)"></span> {{$route.params.name}} #{{$route.params.number}}</h3>
++     <nav class="pull-left">
++      <ul class="pagination" style="margin:15px 20px">
++       <li v-show="$route.params.number > 1"><router-link :to="'/jobs/'+$route.params.name+'/'+($route.params.number-1)">&laquo;</router-link></li>
++       <li v-show="latestNum > $route.params.number"><router-link :to="'/jobs/'+$route.params.name+'/'+(parseInt($route.params.number)+1)">&raquo;</router-link></li>
++      </ul>
++     </nav>
++     <div style="clear:both;"></div>
++     <dl class="dl-horizontal">
++      <dt>Reason</dt><dd>{{job.reason}}</dd>
++      <dt>Queued for</dt><dd>{{job.queued}}s</dd>
++      <dt>Started</dt><dd>{{formatDate(job.started)}}</dd>
++      <dt v-show="runComplete(job)">Completed</dt><dd v-show="job.completed">{{formatDate(job.completed)}}</dd>
++      <dt>Duration</dt><dd>{{formatDuration(job.started, job.completed)}}</dd>
++     </dl>
++    </div>
++    <div class="col-sm-7 col-md-6 col-lg-5">
++     <div class="progress" v-show="job.result == 'running'">
++      <div class="progress-bar  progress-bar-striped" :class="'progress-bar-'+(job.overtime?'warning':'info')" :class="job.etc?'':'active'" :style="{width:!job.etc?100:job.progress + '%'}"></div>
++     </div>
++     <div class="panel panel-default" v-show="job.artifacts.length">
++      <div class="panel-heading">Artifacts</div>
++      <div class="panel-body">
++       <ul class="list-unstyled" style="margin-bottom: 0">
++        <li v-for="art in job.artifacts"><a :href="art.url" target="_self">{{art.filename}}</a></li>
++       </ul>
++      </div>
++     </div>
++    </div>
++   </div>
++   <div class="row"><div class="col-xs-12">
++    <button type="button" class="btn btn-default btn-xs pull-right" :class="{'active':autoscroll}" v-on:click="autoscroll = !autoscroll" style="margin-top:10px">Autoscroll</button>
++    <h4>Console output</h4>
++    <pre v-html="log"></pre>
++   </div></div>
++  </div>
++ </div></template>
++
++ <div id="app">
++  <nav class="navbar navbar-inverse">
++   <div>
++    <router-link to="/" class="navbar-brand"><img src="icon.png">{{title}}</router-link>
++    <router-link to="/jobs" class="btn navbar-btn pull-right">Jobs</router-link>
++   </div>
++  </nav>
++  <a v-on:click="toggleNotifications(!notify)" v-show="supportsNotifications" class="bell pull-right" :class="{'active':notify}" :title="(notify?'Disable':'Enable')+' notifications'">&#128276;</a>
++  <router-view></router-view>
++  <div v-show="!connected" id="popup-connecting"><span class="status spin">⚙&#xfe0e;</span>&nbsp;Connecting...</div>
++ </div>
++</body>
+--- /dev/null
++++ laminar/src/resources/head.html
+@@ -0,0 +1,66 @@
++<head>
++ <base href="/">
++ <meta charset="utf-8">
++ <meta http-equiv="X-UA-Compatible" content="IE=edge">
++ <meta name="viewport" content="width=device-width, initial-scale=1">
++ <meta name="apple-mobile-web-app-capable" content="yes" />
++ <link rel="apple-touch-icon-precomposed" href="favicon-152.png">
++ <title>Laminar</title>
++ <script src="js/vue.min.js"></script>
++ <script src="js/vue-router.min.js"></script>
++ <script src="js/ansi_up.js"></script>
++ <script src="js/Chart.min.js"></script>
++ <script src="js/Chart.HorizontalBar.js"></script>
++ <link href="css/bootstrap.min.css" rel="stylesheet">
++ <link href="custom/style.css" rel="stylesheet">
++ <script src="js/app.js" defer></script>
++ <style>
++  body, html { height: 100%; }
++  .navbar { margin-bottom: 0; border-radius: 0; }
++  .navbar-brand { margin: 0 -15px; padding: 7px 15px }
++  .navbar-brand>img { display: inline; }
++  a.navbar-btn { color: #9d9d9d; }
++  a.navbar-btn.active { color: #fff; }
++  a.navbar-btn:hover { color: #fff; text-decoration: none; }
++  a.navbar-btn:focus { color: #fff; }
++  .bell { margin: 8px 15px; color: #9d9d9d; }
++  .bell:hover { text-decoration: none; color: #9d9d9d; cursor: pointer; }
++  .bell.active { color: #333; }
++  dt,dd { line-height: 2; }
++  canvas {
++   width: 100% !important;
++   max-width: 800px;
++   height: auto !important;
++  }
++  .progress {
++   height: 10px;
++   margin-top: 5px;
++   margin-bottom: 0;
++  }
++  table#joblist tr:first-child td { border-top: 0; }
++  #popup-connecting {
++    position: fixed;
++    background: white;
++    border: 1px solid #ddd;
++    bottom: 10px;
++    right: 10px;
++    padding: 20px;
++  }
++  span.status {
++    display: inline-block;
++    width: 1em;
++    text-align: center;
++    font-family: sans-serif;
++  }
++  span.success { color: forestgreen; }
++  span.failed { color: firebrick; }
++  span.aborted { color: indigo; }
++  span.spin {
++    color: steelblue;
++    animation: 2s linear infinite spin;
++  }
++  @keyframes spin {
++    to { transform: rotate(360deg); }
++  }
++ </style>
++</head>
+--- laminar.orig/src/resources/js/app.js
++++ laminar/src/resources/js/app.js
+@@ -2,9 +2,19 @@
+  * frontend application for Laminar Continuous Integration
+  * https://laminar.ohwg.net
+  */
++
++var basepath = '';
++var base = document.head.querySelector('base');
++if (base) {
++  basepath = base.attributes['href'].value
++  if (basepath.endsWith('/'))
++    // Remove final '/'
++    basepath = basepath.substr(0, basepath.length - 1)
++}
++
+ const wsp = function(path) {
+   return new WebSocket((location.protocol === 'https:'?'wss://':'ws://')
+-                          + location.host + path);
++                          + location.host + basepath + path);
+ }
+ const WebsocketHandler = function() {
+   function setupWebsocket(path, next) {
+--- laminar.orig/src/server.cpp
++++ laminar/src/server.cpp
+@@ -198,6 +198,14 @@ private:
+     std::unordered_map<const Run*, std::list<kj::PromiseFulfillerPair<RunState>>> runWaiters;
+ };
+ 
++static bool replace(std::string& str, const std::string& from, const std::string& to) {
++    size_t start_pos = str.find(from);
++    if(start_pos != std::string::npos) {
++        str.replace(start_pos, from.length(), to);
++        return true;
++    }
++    return false;
++}
+ 
+ // This is the implementation of the HTTP/Websocket interface. It exposes
+ // websocket connections as LaminarClients and registers them with the
+@@ -207,8 +215,16 @@ private:
+ class Server::HttpImpl {
+ public:
+     HttpImpl(LaminarInterface& l) :
+-        laminar(l)
++        laminar(l), basepath("/")
+     {
++        char *e = getenv("LAMINAR_BASE_PATH");
++        if (e)
++            basepath = std::string(e);
++
++        // Base path requires a final slash at end
++        if (!basepath.empty() && basepath[basepath.length() - 1] != '/')
++            basepath.append(1, '/');
++
+         // debug logging
+         // wss.set_access_channels(websocketpp::log::alevel::all);
+         // wss.set_error_channels(websocketpp::log::elevel::all);
+@@ -224,7 +240,25 @@ public:
+             websocket::connection_ptr c = wss.get_con_from_hdl(hdl);
+             const char* start, *end, *content_type;
+             std::string resource = c->get_resource();
+-            if(resource.compare(0, strlen("/archive/"), "/archive/") == 0) {
++            if(resource.compare("/") == 0
++               || resource.compare(0, strlen("/jobs"), "/jobs") == 0) {
++                std::string head = resources.find_template("/head.html");
++                std::string body = resources.find_template("/body.html");
++                std::ostringstream response;
++                response << "<!doctype html>\n<html>\n";
++                if (!basepath.empty()) {
++                    if (!replace(head, "<base href=\"/\">",
++                                 "<base href=\"" + basepath + "\">")) {
++                        response << "<!-- failed to find head.base -->\n";
++                    }
++                }
++                response << head;
++                response << body;
++                response << "</html>";
++                c->set_status(websocketpp::http::status_code::ok);
++                c->append_header("Content-Type", "text/html; charset=utf-8");
++                c->set_body(response.str());
++            } else if(resource.compare(0, strlen("/archive/"), "/archive/") == 0) {
+                 std::string file(resource.substr(strlen("/archive/")));
+                 std::string content;
+                 if(laminar.getArtefact(file, content)) {
+@@ -310,6 +344,7 @@ private:
+     Resources resources;
+     LaminarInterface& laminar;
+     websocket wss;
++    std::string basepath;
+ };
+ 
+ // Context for an RPC connection
