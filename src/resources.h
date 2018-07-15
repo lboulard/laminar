@@ -34,6 +34,9 @@ public:
     // type. Function returns false if no resource for the given path exists
     bool handleRequest(std::string path, const char** start, const char** end, const char** content_type);
 
+    // Find source templates.
+    std::string find_template(std::string path);
+
 private:
     struct Resource {
         const char* start;
@@ -41,6 +44,7 @@ private:
         const char* content_type;
     };
     std::unordered_map<std::string, const Resource> resources;
+    std::unordered_map<std::string, const Resource> templates;
 };
 
 #endif // LAMINAR_RESOURCES_H_

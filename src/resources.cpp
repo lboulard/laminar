@@ -24,6 +24,11 @@
     extern const char _binary_##name##_z_end[]; \
     resources.emplace(route, Resource{_binary_ ## name ## _z_start, _binary_ ## name ## _z_end, content_type})
 
+#define INIT_TEMPLATE(route, name, content_type) \
+    extern const char _binary_##name##_start[];\
+    extern const char _binary_##name##_end[]; \
+    templates.emplace(route, Resource{_binary_ ## name ## _start, _binary_ ## name ## _end, content_type})
+
 #define CONTENT_TYPE_HTML "text/html; charset=utf-8"
 #define CONTENT_TYPE_ICO  "image/x-icon"
 #define CONTENT_TYPE_PNG  "image/png"
@@ -32,7 +37,9 @@
 
 Resources::Resources()
 {
-    INIT_RESOURCE("/", index_html, CONTENT_TYPE_HTML);
+    INIT_TEMPLATE("/head.html", head_html, CONTENT_TYPE_HTML);
+    INIT_TEMPLATE("/body.html", body_html, CONTENT_TYPE_HTML);
+
     INIT_RESOURCE("/favicon.ico", favicon_ico, CONTENT_TYPE_ICO);
     INIT_RESOURCE("/favicon-152.png", favicon_152_png, CONTENT_TYPE_PNG);
     INIT_RESOURCE("/icon.png", icon_png, CONTENT_TYPE_PNG);
@@ -52,11 +59,7 @@ inline bool beginsWith(std::string haystack, const char* needle) {
 }
 
 bool Resources::handleRequest(std::string path, const char** start, const char** end, const char** content_type) {
-    // need to keep the list of "application links" synchronised with the angular
-    // application. We cannot return a 404 for any of these
-    auto it = beginsWith(path,"/jobs")
-            ? resources.find("/")
-            : resources.find(path);
+    auto it = resources.find(path);
 
     if(it != resources.end()) {
         *start = it->second.start;
@@ -68,3 +71,15 @@ bool Resources::handleRequest(std::string path, const char** start, const char**
     return false;
 }
 
+std::string Resources::find_template(std::string path){
+    auto it = templates.find(path);
+
+    if(it != templates.end()) {
+        const char *start = it->second.start;
+        const char *end = it->second.end;
+        // Ignore content type for now
+        return std::string(start, end);
+    }
+
+    return std::string();
+}

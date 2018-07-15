@@ -2,9 +2,19 @@
  * frontend application for Laminar Continuous Integration
  * https://laminar.ohwg.net
  */
+
+var basepath = '';
+var base = document.head.querySelector('base');
+if (base) {
+  basepath = base.attributes['href'].value
+  if (basepath.endsWith('/'))
+    // Remove final '/'
+    basepath = basepath.substr(0, basepath.length - 1)
+}
+
 const wsp = function(path) {
   return new WebSocket((location.protocol === 'https:'?'wss://':'ws://')
-                          + location.host + path);
+                          + location.host + basepath + path);
 }
 const WebsocketHandler = function() {
   function setupWebsocket(path, next) {

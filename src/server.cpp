@@ -198,6 +198,14 @@ private:
     std::unordered_map<const Run*, std::list<kj::PromiseFulfillerPair<RunState>>> runWaiters;
 };
 
+static bool replace(std::string& str, const std::string& from, const std::string& to) {
+    size_t start_pos = str.find(from);
+    if(start_pos != std::string::npos) {
+        str.replace(start_pos, from.length(), to);
+        return true;
+    }
+    return false;
+}
 
 // This is the implementation of the HTTP/Websocket interface. It exposes
 // websocket connections as LaminarClients and registers them with the
@@ -207,8 +215,16 @@ private:
 class Server::HttpImpl {
 public:
     HttpImpl(LaminarInterface& l) :
-        laminar(l)
+        laminar(l), basepath("/")
     {
+        char *e = getenv("LAMINAR_BASE_PATH");
+        if (e)
+            basepath = std::string(e);
+
+        // Base path requires a final slash at end
+        if (!basepath.empty() && basepath[basepath.length() - 1] != '/')
+            basepath.append(1, '/');
+
         // debug logging
         // wss.set_access_channels(websocketpp::log::alevel::all);
         // wss.set_error_channels(websocketpp::log::elevel::all);
@@ -224,7 +240,25 @@ public:
             websocket::connection_ptr c = wss.get_con_from_hdl(hdl);
             const char* start, *end, *content_type;
             std::string resource = c->get_resource();
-            if(resource.compare(0, strlen("/archive/"), "/archive/") == 0) {
+            if(resource.compare("/") == 0
+               || resource.compare(0, strlen("/jobs"), "/jobs") == 0) {
+                std::string head = resources.find_template("/head.html");
+                std::string body = resources.find_template("/body.html");
+                std::ostringstream response;
+                response << "<!doctype html>\n<html>\n";
+                if (!basepath.empty()) {
+                    if (!replace(head, "<base href=\"/\">",
+                                 "<base href=\"" + basepath + "\">")) {
+                        response << "<!-- failed to find head.base -->\n";
+                    }
+                }
+                response << head;
+                response << body;
+                response << "</html>";
+                c->set_status(websocketpp::http::status_code::ok);
+                c->append_header("Content-Type", "text/html; charset=utf-8");
+                c->set_body(response.str());
+            } else if(resource.compare(0, strlen("/archive/"), "/archive/") == 0) {
                 std::string file(resource.substr(strlen("/archive/")));
                 std::string content;
                 if(laminar.getArtefact(file, content)) {
@@ -310,6 +344,7 @@ private:
     Resources resources;
     LaminarInterface& laminar;
     websocket wss;
+    std::string basepath;
 };
 
 // Context for an RPC connection

@@ -1,71 +1,3 @@
-<!doctype html>
-<html>
-<head>
- <base href="/">
- <meta charset="utf-8">
- <meta http-equiv="X-UA-Compatible" content="IE=edge">
- <meta name="viewport" content="width=device-width, initial-scale=1">
- <meta name="apple-mobile-web-app-capable" content="yes" />
- <link rel="apple-touch-icon-precomposed" href="/favicon-152.png">
- <title>Laminar</title>
- <script src="/js/vue.min.js"></script>
- <script src="/js/vue-router.min.js"></script>
- <script src="/js/ansi_up.js"></script>
- <script src="/js/Chart.min.js"></script>
- <script src="/js/Chart.HorizontalBar.js"></script>
- <link href="/css/bootstrap.min.css" rel="stylesheet">
- <link href="/custom/style.css" rel="stylesheet">
- <script src="/js/app.js" defer></script>
- <style>
-  body, html { height: 100%; }
-  .navbar { margin-bottom: 0; border-radius: 0; }
-  .navbar-brand { margin: 0 -15px; padding: 7px 15px }
-  .navbar-brand>img { display: inline; }
-  a.navbar-btn { color: #9d9d9d; }
-  a.navbar-btn.active { color: #fff; }
-  a.navbar-btn:hover { color: #fff; text-decoration: none; }
-  a.navbar-btn:focus { color: #fff; }
-  .bell { margin: 8px 15px; color: #9d9d9d; }
-  .bell:hover { text-decoration: none; color: #9d9d9d; cursor: pointer; }
-  .bell.active { color: #333; }
-  dt,dd { line-height: 2; }
-  canvas {
-   width: 100% !important;
-   max-width: 800px;
-   height: auto !important;
-  }
-  .progress {
-   height: 10px;
-   margin-top: 5px;
-   margin-bottom: 0;
-  }
-  table#joblist tr:first-child td { border-top: 0; }
-  #popup-connecting {
-    position: fixed;
-    background: white;
-    border: 1px solid #ddd;
-    bottom: 10px;
-    right: 10px;
-    padding: 20px;
-  }
-  span.status {
-    display: inline-block;
-    width: 1em;
-    text-align: center;
-    font-family: sans-serif;
-  }
-  span.success { color: forestgreen; }
-  span.failed { color: firebrick; }
-  span.aborted { color: indigo; }
-  span.spin {
-    color: steelblue;
-    animation: 2s linear infinite spin;
-  }
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
- </style>
-</head>
 <body>
  <template id="home"><div>
   <ol class="breadcrumb"><li class="active">Home</li></ol>
@@ -122,9 +54,9 @@
      </div>
     </div>
    </div></div>
-  </div></div> 
+  </div></div>
  </div></template>
- 
+
  <template id="jobs"><div>
   <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li class="active">Jobs</li></ol>
   <div class="container-fluid"><div class="row">
@@ -147,7 +79,7 @@
    </div>
   </div></div>
  </div></template>
- 
+
  <template id="job"><div>
   <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li><router-link to="/jobs">Jobs</router-link></li><li class="active">{{$route.params.name}}</li></ol></ol>
   <div class="container-fluid">
@@ -192,7 +124,7 @@
    </div></div>
   </div>
  </div></template>
- 
+
  <template id="run"><div>
   <ol class="breadcrumb"><li><router-link to="/">Home</router-link></li><li><router-link to="/jobs">Jobs</router-link></li><li><router-link :to="'/jobs/'+$route.params.name">{{$route.params.name}}</router-link></li><li class="active">#{{$route.params.number}}</li></ol></ol>
   <div class="container-fluid">
@@ -239,7 +171,7 @@
  <div id="app">
   <nav class="navbar navbar-inverse">
    <div>
-    <router-link to="/" class="navbar-brand"><img src="/icon.png">{{title}}</router-link>
+    <router-link to="/" class="navbar-brand"><img src="icon.png">{{title}}</router-link>
     <router-link to="/jobs" class="btn navbar-btn pull-right">Jobs</router-link>
    </div>
   </nav>
@@ -248,5 +180,3 @@
   <div v-show="!connected" id="popup-connecting"><span class="status spin">⚙&#xfe0e;</span>&nbsp;Connecting...</div>
  </div>
 </body>
-</html>
-

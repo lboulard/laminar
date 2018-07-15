@@ -63,8 +63,31 @@ macro(generate_compressed_bins BASEDIR)
     endforeach()
 endmacro()
 
+# Same purpose as previous macro but do not compress content.
+# Index page is embedded uncompressed. laminard will change base href at
+# runtime to permit relocation behind web reverse proxy.
+macro(generate_bins BASEDIR)
+    foreach(FILE ${ARGN})
+        set(OUTPUT_FILE "${FILE}.o")
+        get_filename_component(DIR ${FILE} PATH)
+        if(DIR)
+            file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${DIR})
+        endif()
+        add_custom_command(OUTPUT ${OUTPUT_FILE}
+            # Copy resource to build dir to have simple symbol name
+            COMMAND cp -f ${BASEDIR}/${FILE} ${FILE}
+            COMMAND ld -r -b binary -o ${OUTPUT_FILE} ${FILE}
+            DEPENDS ${BASEDIR}/${FILE}
+        )
+    list(APPEND RESOURCES_BINS ${OUTPUT_FILE})
+    endforeach()
+endmacro()
+
+# Compile index page resources
+generate_bins(${CMAKE_SOURCE_DIR}/src/resources head.html body.html)
+
 # Zip and compile statically served resources
-generate_compressed_bins(${CMAKE_SOURCE_DIR}/src/resources index.html js/app.js
+generate_compressed_bins(${CMAKE_SOURCE_DIR}/src/resources js/app.js
     favicon.ico favicon-152.png icon.png)
 
 # Download 3rd-party frontend JS libs...
@@ -93,7 +116,8 @@ capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS src/laminar.capnp)
 
 ## Server
 add_executable(laminard src/database.cpp src/main.cpp src/server.cpp src/laminar.cpp
-    src/conf.cpp src/resources.cpp src/run.cpp ${CAPNP_SRCS} ${COMPRESSED_BINS})
+    src/conf.cpp src/resources.cpp src/run.cpp ${CAPNP_SRCS} ${COMPRESSED_BINS}
+    ${RESOURCES_BINS})
 # TODO: some alternative to boost::filesystem?
 target_link_libraries(laminard PRIVATE CapnProto::capnp-rpc PRIVATE CapnProto::capnp
     PRIVATE CapnProto::kj PRIVATE CapnProto::kj-async
@@ -113,7 +137,7 @@ if(BUILD_TESTS)
         PATH_SUFFIXES . lib
         )
     include_directories(${GTEST_INCLUDE_DIRS} src)
-    add_executable(laminar-tests src/conf.cpp src/database.cpp src/laminar.cpp src/run.cpp src/server.cpp ${CAPNP_SRCS} src/resources.cpp ${COMPRESSED_BINS} test/test-conf.cpp test/test-database.cpp test/test-laminar.cpp test/test-run.cpp test/test-server.cpp)
+    add_executable(laminar-tests src/conf.cpp src/database.cpp src/laminar.cpp src/run.cpp src/server.cpp ${CAPNP_SRCS} src/resources.cpp ${COMPRESSED_BINS} ${RESOURCES_BINS} test/test-conf.cpp test/test-database.cpp test/test-laminar.cpp test/test-run.cpp test/test-server.cpp)
     target_link_libraries(laminar-tests
         PRIVATE CapnProto::capnp-rpc PRIVATE CapnProto::capnp
         PRIVATE CapnProto::kj PRIVATE CapnProto::kj-async
