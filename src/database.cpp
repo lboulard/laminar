@@ -96,6 +96,19 @@ template<> ulong Database::Statement::fetchColumn(int col) {
     return static_cast<ulong>(sqlite3_column_int64(stmt, col));
 }
 
+#if ULLONG_MAX > ULONG_MAX
+
+// unsigned long long support to build on 32bit platform
+
+template<> long long Database::Statement::fetchColumn(int col) {
+    return static_cast<long long>(sqlite3_column_int64(stmt, col));
+}
+template<> unsigned long long Database::Statement::fetchColumn(int col) {
+    return static_cast<unsigned long long>(sqlite3_column_int64(stmt, col));
+}
+
+#endif
+
 bool Database::Statement::row() {
     return sqlite3_step(stmt) == SQLITE_ROW;
 }

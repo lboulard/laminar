@@ -151,5 +151,9 @@ template<> int Database::Statement::fetchColumn(int col);
 template<> uint Database::Statement::fetchColumn(int col);
 template<> long Database::Statement::fetchColumn(int col);
 template<> ulong Database::Statement::fetchColumn(int col);
+#if ULLONG_MAX > ULONG_MAX
+template<> long long Database::Statement::fetchColumn(int col);
+template<> unsigned long long Database::Statement::fetchColumn(int col);
+#endif
 
 #endif // LAMINAR_DATABASE_H_
